@@ -1,14 +1,9 @@
-# Editor / IDE junk
+# IDE / cloud editor junk
+.vscode/
 .vscode-server/
+.cursor/
 .cursor-server/
+.idea/
+.windsurf/
 .windsurf-server/
-lightning_studio/
-
-# OS junk
-.DS_Store
-Thumbs.db
-
-# Python (if applicable)
-__pycache__/
-*.pyc
-.env
+.lightning_studio/
