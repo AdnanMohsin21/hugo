@@ -1,0 +1,14 @@
+# Editor / IDE junk
+.vscode-server/
+.cursor-server/
+.windsurf-server/
+lightning_studio/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Python (if applicable)
+__pycache__/
+*.pyc
+.env
