@@ -1,0 +1,10 @@
+order_id,supplier_name,supplier_email,sku,description,quantity,order_date,expected_delivery,status
+PO-2024-0892,ACME Supplies,logistics@acme-supplies.com,WDG-A100,Widget A Premium,500,2024-12-15,2025-01-05,open
+PO-2024-0892,ACME Supplies,logistics@acme-supplies.com,WDG-B200,Widget B Standard,250,2024-12-15,2025-01-05,open
+GP-78234,Global Parts,shipping@globalparts.io,BRG-IND-100,Industrial Bearings,100,2024-12-10,2025-01-15,open
+GP-78234,Global Parts,shipping@globalparts.io,GR-PREC-50,Precision Gears,50,2024-12-10,2025-01-15,open
+TC-2024-445,Tech Components,orders@techcomponents.com,MCU-ARM-1000,Microcontroller Units,1000,2024-12-01,2025-01-08,open
+TC-2024-445,Tech Components,orders@techcomponents.com,SENS-MOD-500,Sensor Modules,500,2024-12-01,2025-01-08,open
+PO-2024-0755,ACME Supplies,logistics@acme-supplies.com,WDG-C300,Widget C Premium,100,2024-11-20,2024-12-20,complete
+PO-2024-0999,Pacific Logistics,orders@pacificlog.com,PKG-MAT-2000,Packaging Materials,2000,2024-12-20,2025-01-20,open
+PO-2024-0999,Pacific Logistics,orders@pacificlog.com,LBL-STD-5000,Standard Labels,5000,2024-12-20,2025-01-20,open
