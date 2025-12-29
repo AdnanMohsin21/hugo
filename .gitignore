@@ -1,3 +1,18 @@
+<<<<<<< HEAD
+# Cloud / IDE junk
+.vscode/
+.vscode-server
+.cursor/
+.cursor-server
+.idea/
+.windsurf/
+.windsurf-server
+.lightning_studio/
+
+# Streamlit
+.streamlit/machine_id*
+=======
 .env
 credentials.json
 token.json
+>>>>>>> 8a0f741faa9c44c846dccccadea8ded47d968233
