@@ -1,12 +1,12 @@
 <<<<<<< HEAD
 # Cloud / IDE junk
 .vscode/
-.vscode-server/
+.vscode-server
 .cursor/
-.cursor-server/
+.cursor-server
 .idea/
 .windsurf/
-.windsurf-server/
+.windsurf-server
 .lightning_studio/
 
 # Streamlit
