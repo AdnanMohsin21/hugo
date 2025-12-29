@@ -1,0 +1,12 @@
+# Cloud / IDE junk
+.vscode/
+.vscode-server/
+.cursor/
+.cursor-server/
+.idea/
+.windsurf/
+.windsurf-server/
+.lightning_studio/
+
+# Streamlit
+.streamlit/machine_id*

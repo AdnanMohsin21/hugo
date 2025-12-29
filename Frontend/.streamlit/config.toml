@@ -1,0 +1,9 @@
+[theme]
+primaryColor = "#2B6AFF"     # The 'Electric Blue' accent
+backgroundColor = "#F9F9F7"  # The 'Warm Off-White' background
+secondaryBackgroundColor = "#FFFFFF" # Card background
+textColor = "#0A192F"        # The 'Deep Blue' text
+font = "sans serif"
+
+[server]
+headless = true
