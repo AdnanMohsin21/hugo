@@ -1,0 +1,6 @@
+email_id,sender,subject,body,order_id,sku,received_date
+E001,logistics@acme-supplies.com,RE: PO-2024-0892 - Delivery Update,"Due to supply chain disruptions, delivery delayed by 7 days. Affected items: Widget A, Widget B.",PO-2024-0892,"WDG-A100,WDG-B200",2024-12-28
+E002,shipping@globalparts.io,Shipment Notification - Order GP-78234,Your order is shipping early! Expected delivery moved from Jan 15 to Jan 10.,GP-78234,BRG-IND-100,2024-12-27
+E003,orders@techcomponents.com,URGENT: Partial Shipment Notice - PO TC-2024-445,"Can only fulfill 60% of Microcontroller Units. Remaining 400 units in 3 weeks.",TC-2024-445,MCU-ARM-1000,2024-12-26
+E004,logistics@acme-supplies.com,Monthly delivery schedule update,All January orders on track. No delays expected for Widget C orders.,PO-2024-0755,WDG-C300,2024-12-25
+E005,support@pacificlog.com,Order Confirmation - PO-2024-0999,Your packaging materials order has been confirmed. Shipping next week.,PO-2024-0999,"PKG-MAT-2000,LBL-STD-5000",2024-12-24

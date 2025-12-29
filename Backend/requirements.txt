@@ -1,0 +1,27 @@
+# Hugo - Inbox Watchdog Agent
+# Python 3.10+ required
+
+# Google Cloud Platform
+google-cloud-aiplatform>=1.38.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-api-python-client>=2.108.0
+
+# Vector Database (local, no external service needed)
+chromadb>=0.4.18
+
+# Data & Validation
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+pandas>=2.0.0
+
+# Email parsing
+beautifulsoup4>=4.12.0
+html2text>=2020.1.16
+
+# Utilities
+tenacity>=8.2.0
+python-dateutil>=2.8.2
+
+# Testing
+pytest>=7.4.0
