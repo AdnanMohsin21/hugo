@@ -2,6 +2,8 @@
 Hugo - Inbox Watchdog Agent
 Main Orchestrator
 
+HYBRID ARCHITECTURE: LLMs are constrained to semantic understanding only. All decisions are deterministic.
+
 Entry point that ties all modules together into a complete pipeline.
 Designed for Streamlit-compatible async operation.
 """
@@ -20,10 +22,19 @@ from services.delivery_detector import DeliveryDetector
 from services.erp_matcher import ERPMatcher
 from services.vector_store import VectorStore
 from services.risk_engine import RiskEngine
-from services.ollama_llm import check_ollama_status
+from services.huggingface_llm import HuggingFaceLLM
 from utils.helpers import setup_logging
+from enum import Enum
 
 logger = setup_logging()
+
+
+class AlertSeverity(str, Enum):
+    """Alert severity levels."""
+    INFO = "INFO"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
 
 
 def check_llm_provider_status() -> dict:
@@ -33,18 +44,82 @@ def check_llm_provider_status() -> dict:
     Returns:
         dict with 'provider', 'available', and 'model' keys
     """
-    # Force Ollama as the only LLM provider
-    ollama_model = os.environ.get("OLLAMA_MODEL", "gemma:2b")
-    ollama_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    # Use Hugging Face as the LLM provider
+    hf_token = os.environ.get("HF_TOKEN")
+    model = "google/flan-t5-large"
     
-    logger.info(f"LLM Provider: Ollama (model: {ollama_model}, url: {ollama_url})")
-    available = check_ollama_status(ollama_url)
+    available = hf_token is not None and hf_token != ""
+    
+    logger.info(f"LLM Provider: Hugging Face (model: {model}, available: {available})")
     
     return {
-        "provider": "ollama",
+        "provider": "huggingface",
         "available": available,
-        "model": ollama_model
+        "model": model
     }
+
+
+def should_generate_alert(change: DeliveryChange, unmapped: bool = False) -> bool:
+    """
+    Determine if an alert should be generated based on delivery change.
+    
+    Alert is generated when ANY of these are true:
+    - delay_days > 0
+    - quantity_change < 0
+    - confidence >= 0.6
+    - unmapped supplier with detected change
+    
+    Args:
+        change: DeliveryChange object
+        unmapped: Whether the supplier is not in ERP
+        
+    Returns:
+        True if alert should be generated
+    """
+    if unmapped and change.detected:
+        return True
+
+    if change.delay_days is not None and change.delay_days > 0:
+        return True
+    
+    if change.quantity_change is not None and change.quantity_change < 0:
+        return True
+    
+    if change.confidence >= 0.6:
+        return True
+        
+    if change.detected:
+        return True
+    
+    return False
+
+
+def get_alert_severity(change: DeliveryChange, unmapped: bool = False) -> AlertSeverity:
+    """
+    Determine alert severity level based on delivery change.
+    
+    Severity rules:
+    - INFO if unmapped supplier
+    - HIGH if delay_days >= 7 OR quantity_change <= -20
+    - MEDIUM if delay_days 1-6
+    - LOW otherwise
+    """
+    if unmapped:
+        return AlertSeverity.INFO
+
+    delay_days = change.delay_days or 0
+    quantity_change = change.quantity_change or 0
+    
+    # HIGH severity conditions
+    if delay_days >= 7 or quantity_change <= -20:
+        return AlertSeverity.HIGH
+    
+    # MEDIUM severity conditions
+    if delay_days >= 1 and delay_days <= 6:
+        return AlertSeverity.MEDIUM
+    
+    # LOW severity otherwise
+    return AlertSeverity.LOW
 
 
 
@@ -97,25 +172,88 @@ class HugoAgent:
         logger.info(f"Starting email processing (max: {max_emails})")
         alerts = []
         
+        # Metrics tracking
+        metrics = {
+            "emails_processed": 0,
+            "signals_detected": 0,
+            "alerts_generated": 0,
+            "total_delay_days": 0,
+            "delay_count": 0,
+            "high_risk_count": 0
+        }
+        
         # Step 1: Fetch emails
         emails = self.email_service.fetch_emails(query=query, max_results=max_emails)
         logger.info(f"Fetched {len(emails)} emails")
         
         if not emails:
+            self._print_metrics_summary(metrics)
             return alerts
         
         # Step 2-6: Process each email
         for email in emails:
+            metrics["emails_processed"] += 1
             alert = self._process_single_email(email)
-            if alert and alert.delivery_change.detected:
-                alerts.append(alert)
+            
+            if alert:
+                change = alert.delivery_change
+                
+                if change.detected:
+                    metrics["signals_detected"] += 1
+                
+                # Check if alert should be generated
+                is_unmapped = alert.alert_source == "unmapped_supplier"
+                if should_generate_alert(change, unmapped=is_unmapped):
+                    alerts.append(alert)
+                    metrics["alerts_generated"] += 1
+                    
+                    # Track delay metrics
+                    if change.delay_days is not None and change.delay_days > 0:
+                        metrics["total_delay_days"] += change.delay_days
+                        metrics["delay_count"] += 1
+                    
+                    # Track high-risk alerts
+                    severity = get_alert_severity(change, unmapped=is_unmapped)
+                    if severity == AlertSeverity.HIGH:
+                        metrics["high_risk_count"] += 1
         
         logger.info(f"Generated {len(alerts)} alerts from {len(emails)} emails")
+        self._print_metrics_summary(metrics)
         return alerts
+    
+    def _print_metrics_summary(self, metrics: dict) -> None:
+        """
+        Print a clean metrics summary at the end of execution.
+        
+        Args:
+            metrics: Dictionary with metrics data
+        """
+        print("\n" + "="*60)
+        print("PROCESSING METRICS SUMMARY")
+        print("="*60)
+        print(f"Emails Processed:        {metrics['emails_processed']}")
+        print(f"Signals Detected:        {metrics['signals_detected']}")
+        print(f"Alerts Generated:        {metrics['alerts_generated']}")
+        
+        if metrics['delay_count'] > 0:
+            avg_delay = metrics['total_delay_days'] / metrics['delay_count']
+            print(f"Average Delay Days:       {avg_delay:.1f}")
+        else:
+            print(f"Average Delay Days:       0.0")
+        
+        if metrics['alerts_generated'] > 0:
+            high_risk_pct = (metrics['high_risk_count'] / metrics['alerts_generated']) * 100
+            print(f"High-Risk Alerts:         {metrics['high_risk_count']} ({high_risk_pct:.1f}%)")
+        else:
+            print(f"High-Risk Alerts:         0 (0.0%)")
+        
+        print("="*60 + "\n")
     
     def _process_single_email(self, email: Email) -> Optional[AlertResult]:
         """
-        Process a single email through the full pipeline.
+        Process a single email through the full pipeline using hybrid architecture.
+        
+        LLMs are constrained to semantic understanding only. All decisions are deterministic.
         
         Args:
             email: Email to process
@@ -124,39 +262,61 @@ class HugoAgent:
             AlertResult or None
         """
         try:
-            # Step 2: Detect delivery changes
-            change = self.detector.detect_changes(email)
+            # Step 1: Match to PO first (for RAG context and guardrail)
+            # Create a temporary change for matching
+            temp_change = DeliveryChange(detected=True, confidence=0.5)
+            po = self.erp.match_delivery_change(temp_change, email.sender)
             
-            if not change.detected:
-                logger.debug(f"No change detected in: {email.subject[:40]}...")
+            alert_source = "mapped_po"
+            if not po:
+                logger.info(f"No matching PO for {email.sender}, proceeding as unmapped supplier")
+                alert_source = "unmapped_supplier"
+            
+            # Step 2: Get historical context (for RAG)
+            context = self.vector_store.build_context(temp_change, po)
+            
+            # Step 3: Build RAG context
+            rag_context_parts = []
+            if po:
+                rag_context_parts.append(f"PO: {po.po_number}, Supplier: {po.supplier_name}, Priority: {po.priority}")
+            if context:
+                rag_context_parts.append(f"Reliability: {context.supplier_reliability_score:.2f}, Past Issues: {context.total_past_issues}")
+            rag_context = "\n".join(rag_context_parts) if rag_context_parts else None
+            
+            # Step 4: Detect delivery changes (extracts signals + calculates values)
+            change, signal = self.detector.detect_changes(email, po, rag_context)
+            
+            # Step 5: Check if alert should be generated (deterministic Python logic)
+            if not should_generate_alert(change, unmapped=(alert_source == "unmapped_supplier")):
+                logger.debug(f"No alert condition met for: {email.subject[:40]}...")
                 return AlertResult(
                     email=email,
                     delivery_change=change,
                     processed_at=datetime.utcnow()
                 )
             
-            logger.info(f"Change detected: {change.change_type.value if change.change_type else 'unknown'}")
+            # Step 6: Determine alert severity (deterministic Python logic)
+            severity = get_alert_severity(change, unmapped=(alert_source == "unmapped_supplier"))
+            logger.info(f"Change detected: {change.change_type.value if change.change_type else 'unknown'} (severity: {severity.value})")
             
-            # Step 3: Match to PO
-            po = self.erp.match_delivery_change(change, email.sender)
             if po:
                 logger.info(f"Matched to PO: {po.po_number}")
             
-            # Step 4: Get historical context
-            context = self.vector_store.build_context(change, po)
-            logger.info(f"Retrieved context: {context.total_past_issues} past issues")
+            if context:
+                logger.info(f"Retrieved context: {context.total_past_issues} past issues")
             
-            # Step 5: Assess risk
-            risk = self.risk_engine.assess_risk(change, po, context, email.body)
+            # Step 7: Assess risk (computes risk_score deterministically)
+            risk = self.risk_engine.assess_risk(change, po, context, email.body, signal)
             logger.info(f"Risk assessment: {risk.risk_level.value} ({risk.risk_score:.2f})")
             
-            # Step 6: Build alert
+            # Step 8: Build alert
             return AlertResult(
                 email=email,
                 delivery_change=change,
                 matched_po=po,
                 historical_context=context,
                 risk_assessment=risk,
+                alert_source=alert_source,
                 processed_at=datetime.utcnow()
             )
             
@@ -269,27 +429,27 @@ class HugoAgent:
 def run_demo():
     """Run a demo of the Hugo agent with mock data."""
     print("\n" + "="*60)
-    print("🐕 HUGO - Inbox Watchdog Agent Demo")
+    print("HUGO - Inbox Watchdog Agent Demo")
     print("="*60 + "\n")
     
     # Initialize agent
     agent = HugoAgent()
     
     # Process emails (uses mock data without Gmail credentials)
-    print("📬 Fetching and processing supplier emails...\n")
+    print("Fetching and processing supplier emails...\n")
     alerts = agent.process_emails(max_emails=5)
     
     # Display results
     for i, alert in enumerate(alerts, 1):
         print(f"\n{'─'*50}")
-        print(f"📧 Alert #{i}")
+        print(f"Alert #{i}")
         print(f"{'─'*50}")
         print(f"From: {alert.email.sender_name or alert.email.sender}")
         print(f"Subject: {alert.email.subject}")
         
         if alert.delivery_change.detected:
             change = alert.delivery_change
-            print(f"\n⚠️  Change Detected: {change.change_type.value if change.change_type else 'Unknown'}")
+            print(f"\nChange Detected: {change.change_type.value if change.change_type else 'Unknown'}")
             if change.delay_days:
                 print(f"   Delay: {change.delay_days} days")
             if change.affected_items:
@@ -307,7 +467,7 @@ def run_demo():
             if alert.risk_assessment:
                 risk = alert.risk_assessment
                 level_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}
-                print(f"\n🎯 Risk Assessment: {level_emoji.get(risk.risk_level.value, '⚪')} {risk.risk_level.value.upper()}")
+                print(f"\nRisk Assessment: {risk.risk_level.value.upper()}")
                 print(f"   Score: {risk.risk_score:.0%}")
                 print(f"   Impact: {risk.impact_summary}")
                 if risk.recommended_actions:
@@ -316,7 +476,7 @@ def run_demo():
                         print(f"   • {action}")
     
     print(f"\n{'='*60}")
-    print(f"✅ Processed {len(alerts)} alerts")
+    print(f"Processed {len(alerts)} alerts")
     print("="*60 + "\n")
     
     return alerts

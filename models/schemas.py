@@ -24,10 +24,48 @@ class ChangeType(str, Enum):
 
 class RiskLevel(str, Enum):
     """Risk severity levels for operational impact."""
+    INFO = "info"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+class UrgencyLevel(str, Enum):
+    """Urgency levels extracted from email signals."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class CommitmentConfidence(str, Enum):
+    """Confidence levels for supplier commitments."""
+    STRONG = "strong"
+    MEDIUM = "medium"
+    WEAK = "weak"
+
+
+class SupplierSentiment(str, Enum):
+    """Supplier sentiment extracted from email."""
+    POSITIVE = "positive"
+    NEUTRAL = "neutral"
+    NEGATIVE = "negative"
+
+
+class Signal(BaseModel):
+    """
+    Semantic signals extracted from supplier emails by LLM.
+    
+    LLMs are constrained to semantic understanding only. All decisions are deterministic.
+    This schema contains ONLY semantic signals - no numbers, no calculations, no decisions.
+    """
+    delay_mentioned: bool = Field(False, description="Whether delay is mentioned in email")
+    quantity_change_mentioned: bool = Field(False, description="Whether quantity change is mentioned")
+    eta_changed: bool = Field(False, description="Whether ETA/delivery date changed")
+    urgency_level: UrgencyLevel = Field(UrgencyLevel.LOW, description="Perceived urgency level")
+    commitment_confidence: CommitmentConfidence = Field(CommitmentConfidence.MEDIUM, description="Confidence in supplier commitment")
+    supplier_sentiment: SupplierSentiment = Field(SupplierSentiment.NEUTRAL, description="Supplier sentiment")
+    ambiguity_detected: bool = Field(False, description="Whether ambiguity or uncertainty detected")
 
 
 class Email(BaseModel):
@@ -115,6 +153,7 @@ class AlertResult(BaseModel):
     matched_po: Optional[PurchaseOrder] = Field(None, description="Matched purchase order")
     historical_context: Optional[HistoricalContext] = Field(None, description="Retrieved context")
     risk_assessment: Optional[RiskAssessment] = Field(None, description="Risk analysis")
+    alert_source: str = Field("default", description="Source of the alert (e.g., mapped_po, unmapped_supplier)")
     processed_at: datetime = Field(default_factory=datetime.utcnow, description="Processing timestamp")
     
     class Config:

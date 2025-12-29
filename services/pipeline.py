@@ -294,7 +294,7 @@ def _parse_email(email_text: str, sender: str, subject: str) -> dict:
     
     # Use DeliveryDetector
     detector = DeliveryDetector()
-    change = detector.detect_changes(email)
+    change, _ = detector.detect_changes(email)
     
     # Extract supplier_id from sender if not in email
     supplier_id = None

@@ -1,12 +1,12 @@
 """
 Hugo - JSON Repair Service
 
-Automatically repairs malformed JSON responses from Ollama.
-If JSON parsing fails, asks Ollama to fix it and retries once.
+Automatically repairs malformed JSON responses from LLM.
+If JSON parsing fails, asks LLM to fix it and retries once.
 
 Design:
 - Non-intrusive: only called when parsing fails
-- Single retry: asks Ollama to fix, then accepts result or falls back
+- Single retry: asks LLM to fix, then accepts result or falls back
 - Logged: all failures clearly logged
 - No hardcoded logic: uses LLM to repair, not regex hacks
 """
@@ -14,8 +14,8 @@ Design:
 import json
 import logging
 import re
-import requests
 from typing import Optional, Dict, Any
+from huggingface_hub import InferenceClient
 
 logger = logging.getLogger("hugo.json_repair")
 
@@ -101,14 +101,24 @@ def normalize_json_output(data: dict[str, Any]) -> dict[str, Any]:
 def attempt_json_repair(
     raw_response: str,
     parse_error: Exception,
-    ollama_url: str,
-    model: str,
+    ollama_url: str = "",  # Deprecated, kept for compatibility
+    model: str = "google/flan-t5-large",
     timeout: int = 30
 ) -> Optional[dict[str, Any]]:
     """
-    Attempt to repair malformed JSON by asking Ollama to fix it.
+    Attempt to repair malformed JSON by asking LLM to fix it.
     
-    Retries up to 2 times.
+    Uses Hugging Face Inference API for repair.
+    
+    Args:
+        raw_response: Original malformed response
+        parse_error: JSON parsing error
+        ollama_url: Deprecated, kept for compatibility
+        model: HF model identifier
+        timeout: Request timeout
+        
+    Returns:
+        Repaired JSON dict or empty dict on failure
     """
     
     logger.warning(f"JSON parsing failed: {str(parse_error)[:100]}")
@@ -127,8 +137,8 @@ def attempt_json_repair(
             
             logger.info(f"Repair validation attempt {attempt + 1}/2")
             
-            # Call Ollama
-            fixed_response = _call_ollama_for_repair(repair_prompt, ollama_url, model, timeout)
+            # Call Hugging Face API
+            fixed_response = _call_hf_for_repair(repair_prompt, model, timeout)
             
             # Clean and parse
             cleaned_fixed = clean_json_text(fixed_response)
@@ -153,32 +163,35 @@ def attempt_json_repair(
     return {}  # Return safe empty object instead of None
 
 
-def _call_ollama_for_repair(
+def _call_hf_for_repair(
     prompt: str,
-    ollama_url: str,
     model: str,
     timeout: int
 ) -> str:
     """
-    Call Ollama to repair malformed JSON.
+    Call Hugging Face Inference API to repair malformed JSON.
+    Uses text_generation API.
     """
+    import os
     
-    url = f"{ollama_url.rstrip('/')}/api/generate"
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise ValueError("HF_TOKEN environment variable is required for JSON repair")
     
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "temperature": 0.1
-    }
+    client = InferenceClient(model=model, token=token)
     
     try:
-        response = requests.post(url, json=payload, timeout=timeout)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "").strip()
+        # Use text generation API for flan-t5 models
+        response = client.text_generation(
+            prompt,
+            max_new_tokens=1000,
+            temperature=0.1,
+            seed=42
+        )
+        
+        return response.strip()
     except Exception as e:
-        logger.error(f"Ollama repair call failed: {e}")
+        logger.error(f"HF repair call failed: {e}")
         raise
 
 
@@ -213,4 +226,5 @@ def clean_json_text(text: str) -> str:
 __all__ = [
     "attempt_json_repair",
     "clean_json_text",
+    "normalize_json_output",
 ]
