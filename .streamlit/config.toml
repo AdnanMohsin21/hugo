@@ -1,8 +1,8 @@
 [theme]
-primaryColor = "#0052CC"      # Enterprise Blue
-backgroundColor = "#FFFFFF"   # Clean White
-secondaryBackgroundColor = "#F4F5F7" # Soft Grey Sidebar
-textColor = "#172B4D"         # Dark Navy Text
+primaryColor = "#2B6AFF"     # The 'Electric Blue' accent
+backgroundColor = "#F9F9F7"  # The 'Warm Off-White' background
+secondaryBackgroundColor = "#FFFFFF" # Card background
+textColor = "#0A192F"        # The 'Deep Blue' text
 font = "sans serif"
 
 [server]

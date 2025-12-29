@@ -1,4 +1,4 @@
-# IDE / cloud editor junk
+# Cloud / IDE junk
 .vscode/
 .vscode-server/
 .cursor/
@@ -7,3 +7,6 @@
 .windsurf/
 .windsurf-server/
 .lightning_studio/
+
+# Streamlit
+.streamlit/machine_id*
