@@ -11,6 +11,7 @@ Designed for Streamlit-compatible async operation.
 import asyncio
 import os
 import requests
+import re
 from datetime import datetime
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +36,7 @@ class AlertSeverity(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 def check_llm_provider_status() -> dict:
@@ -59,26 +61,104 @@ def check_llm_provider_status() -> dict:
     }
 
 
-def should_generate_alert(change: DeliveryChange, unmapped: bool = False) -> bool:
+def extract_valid_po_reference(subject: str, body: str) -> Optional[str]:
+    """
+    Extract valid PO reference using strict regex pattern.
+    
+    Args:
+        subject: Email subject
+        body: Email body
+        
+    Returns:
+        PO reference if valid, None otherwise
+    """
+    po_pattern = r'PO-\d{4}-\d{5}'
+    
+    # Search subject first (higher priority)
+    subject_match = re.search(po_pattern, subject, re.IGNORECASE)
+    if subject_match:
+        return subject_match.group(0).upper()
+    
+    # Search body
+    body_match = re.search(po_pattern, body, re.IGNORECASE)
+    if body_match:
+        return body_match.group(0).upper()
+    
+    return None
+
+
+def is_holiday_or_marketing_email(subject: str, body: str, sender: str) -> bool:
+    """
+    Filter out holiday, newsletter, and marketing emails.
+    
+    Args:
+        subject: Email subject
+        body: Email body
+        sender: Sender email
+        
+    Returns:
+        True if holiday/marketing email, False otherwise
+    """
+    subject_lower = subject.lower()
+    body_lower = body.lower()
+    sender_lower = sender.lower()
+    
+    # Holiday and marketing keywords
+    marketing_keywords = [
+        'holiday', 'christmas', 'new year', 'thanksgiving', 'newsletter',
+        'promotion', 'sale', 'discount', 'offer', 'marketing',
+        'unsubscribe', 'campaign', 'greetings', 'seasonal'
+    ]
+    
+    # Check for marketing keywords in subject or body
+    for keyword in marketing_keywords:
+        if keyword in subject_lower or keyword in body_lower:
+            return True
+    
+    # Check for common marketing sender patterns
+    marketing_patterns = [
+        r'.*@marketing\.',
+        r'.*@newsletter\.',
+        r'.*@promo\.',
+        r'.*@campaign\.',
+        r'noreply@',
+        r'donotreply@'
+    ]
+    
+    for pattern in marketing_patterns:
+        if re.search(pattern, sender_lower):
+            return True
+    
+    return False
+
+
+def should_generate_alert(change: DeliveryChange, po_reference: Optional[str], unmapped: bool = False) -> bool:
     """
     Determine if an alert should be generated based on delivery change.
     
-    Alert is generated when ANY of these are true:
-    - delay_days > 0
-    - quantity_change < 0
-    - confidence >= 0.6
-    - unmapped supplier with detected change
+    CRITICAL: Alert MUST be generated ONLY if valid PO reference exists.
     
     Args:
         change: DeliveryChange object
+        po_reference: Valid PO reference or None
         unmapped: Whether the supplier is not in ERP
         
     Returns:
         True if alert should be generated
     """
+    # CRITICAL: No valid PO → no alert
+    if not po_reference:
+        return False
+    
+    # At least one signal must be true
+    if not change.detected:
+        return False
+    
+    # For unmapped suppliers, only generate if signal detected
     if unmapped and change.detected:
         return True
-
+    
+    # For mapped suppliers, check alert conditions
     if change.delay_days is not None and change.delay_days > 0:
         return True
     
@@ -94,32 +174,73 @@ def should_generate_alert(change: DeliveryChange, unmapped: bool = False) -> boo
     return False
 
 
+def calculate_risk_score(change: DeliveryChange, unmapped: bool = False) -> float:
+    """
+    Calculate risk score deterministically (0-1).
+    
+    Args:
+        change: DeliveryChange object
+        unmapped: Whether supplier is not in ERP
+        
+    Returns:
+        Risk score between 0.0 and 1.0
+    """
+    base_score = 0.0
+    
+    # Signal-based risk factors
+    if change.delay_days and change.delay_days > 0:
+        if change.delay_days >= 7:
+            base_score += 0.4
+        elif change.delay_days >= 3:
+            base_score += 0.3
+        else:
+            base_score += 0.2
+    
+    if change.quantity_change and change.quantity_change < 0:
+        abs_change = abs(change.quantity_change)
+        if abs_change >= 20:
+            base_score += 0.3
+        elif abs_change >= 10:
+            base_score += 0.2
+        else:
+            base_score += 0.1
+    
+    # Confidence factor
+    if change.confidence >= 0.8:
+        base_score += 0.2
+    elif change.confidence >= 0.6:
+        base_score += 0.1
+    
+    # Unmapped supplier penalty (but cap at MEDIUM)
+    if unmapped:
+        base_score += 0.1
+    
+    # Normalize to 0.0-1.0 range
+    return min(max(base_score, 0.0), 1.0)
+
+
 def get_alert_severity(change: DeliveryChange, unmapped: bool = False) -> AlertSeverity:
     """
-    Determine alert severity level based on delivery change.
+    Determine alert severity level based on risk score.
     
     Severity rules:
-    - INFO if unmapped supplier
-    - HIGH if delay_days >= 7 OR quantity_change <= -20
-    - MEDIUM if delay_days 1-6
-    - LOW otherwise
+    - INFO if unmapped supplier (never escalate)
+    - CRITICAL if risk_score >= 0.7
+    - MEDIUM if risk_score >= 0.4
+    - INFO otherwise
     """
+    # CRITICAL: Unmapped suppliers never exceed INFO
     if unmapped:
         return AlertSeverity.INFO
-
-    delay_days = change.delay_days or 0
-    quantity_change = change.quantity_change or 0
     
-    # HIGH severity conditions
-    if delay_days >= 7 or quantity_change <= -20:
-        return AlertSeverity.HIGH
+    risk_score = calculate_risk_score(change, unmapped)
     
-    # MEDIUM severity conditions
-    if delay_days >= 1 and delay_days <= 6:
+    if risk_score >= 0.7:
+        return AlertSeverity.CRITICAL
+    elif risk_score >= 0.4:
         return AlertSeverity.MEDIUM
-    
-    # LOW severity otherwise
-    return AlertSeverity.LOW
+    else:
+        return AlertSeverity.INFO
 
 
 
@@ -175,11 +296,11 @@ class HugoAgent:
         # Metrics tracking
         metrics = {
             "emails_processed": 0,
+            "relevant_emails": 0,
             "signals_detected": 0,
             "alerts_generated": 0,
-            "total_delay_days": 0,
-            "delay_count": 0,
-            "high_risk_count": 0
+            "false_positives_prevented": 0,
+            "high_risk_alerts": 0
         }
         
         # Step 1: Fetch emails
@@ -193,7 +314,24 @@ class HugoAgent:
         # Step 2-6: Process each email
         for email in emails:
             metrics["emails_processed"] += 1
-            alert = self._process_single_email(email)
+            
+            # Step 2: Filter out holiday/marketing emails
+            if is_holiday_or_marketing_email(email.subject, email.body, email.sender):
+                logger.debug(f"Filtered marketing email: {email.subject[:40]}...")
+                metrics["false_positives_prevented"] += 1
+                continue
+            
+            # Step 3: Extract valid PO reference
+            po_reference = extract_valid_po_reference(email.subject, email.body)
+            if not po_reference:
+                logger.debug(f"No valid PO reference found: {email.subject[:40]}...")
+                metrics["false_positives_prevented"] += 1
+                continue
+            
+            metrics["relevant_emails"] += 1
+            
+            # Step 4: Process email for delivery changes
+            alert = self._process_single_email(email, po_reference)
             
             if alert:
                 change = alert.delivery_change
@@ -201,21 +339,20 @@ class HugoAgent:
                 if change.detected:
                     metrics["signals_detected"] += 1
                 
-                # Check if alert should be generated
+                # Step 5: Check if alert should be generated (with PO validation)
                 is_unmapped = alert.alert_source == "unmapped_supplier"
-                if should_generate_alert(change, unmapped=is_unmapped):
+                if should_generate_alert(change, po_reference, unmapped=is_unmapped):
                     alerts.append(alert)
                     metrics["alerts_generated"] += 1
                     
-                    # Track delay metrics
-                    if change.delay_days is not None and change.delay_days > 0:
-                        metrics["total_delay_days"] += change.delay_days
-                        metrics["delay_count"] += 1
-                    
                     # Track high-risk alerts
                     severity = get_alert_severity(change, unmapped=is_unmapped)
-                    if severity == AlertSeverity.HIGH:
-                        metrics["high_risk_count"] += 1
+                    if severity == AlertSeverity.CRITICAL:
+                        metrics["high_risk_alerts"] += 1
+                else:
+                    # Alert was gated out
+                    metrics["false_positives_prevented"] += 1
+                    logger.debug(f"Alert gated: {email.subject[:40]}...")
         
         logger.info(f"Generated {len(alerts)} alerts from {len(emails)} emails")
         self._print_metrics_summary(metrics)
@@ -232,24 +369,23 @@ class HugoAgent:
         print("PROCESSING METRICS SUMMARY")
         print("="*60)
         print(f"Emails Processed:        {metrics['emails_processed']}")
+        print(f"Relevant Emails:         {metrics['relevant_emails']}")
         print(f"Signals Detected:        {metrics['signals_detected']}")
         print(f"Alerts Generated:        {metrics['alerts_generated']}")
-        
-        if metrics['delay_count'] > 0:
-            avg_delay = metrics['total_delay_days'] / metrics['delay_count']
-            print(f"Average Delay Days:       {avg_delay:.1f}")
-        else:
-            print(f"Average Delay Days:       0.0")
+        print(f"False Positives Prevented:{metrics['false_positives_prevented']}")
+        print(f"High-Risk Alerts:         {metrics['high_risk_alerts']}")
         
         if metrics['alerts_generated'] > 0:
-            high_risk_pct = (metrics['high_risk_count'] / metrics['alerts_generated']) * 100
-            print(f"High-Risk Alerts:         {metrics['high_risk_count']} ({high_risk_pct:.1f}%)")
-        else:
-            print(f"High-Risk Alerts:         0 (0.0%)")
+            high_risk_pct = (metrics['high_risk_alerts'] / metrics['alerts_generated']) * 100
+            print(f"High-Risk Percentage:     {high_risk_pct:.1f}%")
+        
+        if metrics['relevant_emails'] > 0:
+            alert_rate = (metrics['alerts_generated'] / metrics['relevant_emails']) * 100
+            print(f"Alert Generation Rate:   {alert_rate:.1f}%")
         
         print("="*60 + "\n")
     
-    def _process_single_email(self, email: Email) -> Optional[AlertResult]:
+    def _process_single_email(self, email: Email, po_reference: Optional[str] = None) -> Optional[AlertResult]:
         """
         Process a single email through the full pipeline using hybrid architecture.
         
@@ -257,6 +393,7 @@ class HugoAgent:
         
         Args:
             email: Email to process
+            po_reference: Valid PO reference (already validated)
         
         Returns:
             AlertResult or None
@@ -268,9 +405,12 @@ class HugoAgent:
             po = self.erp.match_delivery_change(temp_change, email.sender)
             
             alert_source = "mapped_po"
+            is_unmapped = False
+            
             if not po:
-                logger.info(f"No matching PO for {email.sender}, proceeding as unmapped supplier")
+                logger.info(f"Unmapped supplier — severity downgraded: {email.sender}")
                 alert_source = "unmapped_supplier"
+                is_unmapped = True
             
             # Step 2: Get historical context (for RAG)
             context = self.vector_store.build_context(temp_change, po)
@@ -286,9 +426,9 @@ class HugoAgent:
             # Step 4: Detect delivery changes (extracts signals + calculates values)
             change, signal = self.detector.detect_changes(email, po, rag_context)
             
-            # Step 5: Check if alert should be generated (deterministic Python logic)
-            if not should_generate_alert(change, unmapped=(alert_source == "unmapped_supplier")):
-                logger.debug(f"No alert condition met for: {email.subject[:40]}...")
+            # Step 5: Check if alert should be generated (with PO validation)
+            if not should_generate_alert(change, po_reference, unmapped=is_unmapped):
+                logger.debug(f"Alert creation rules not met: {email.subject[:40]}...")
                 return AlertResult(
                     email=email,
                     delivery_change=change,
@@ -296,7 +436,7 @@ class HugoAgent:
                 )
             
             # Step 6: Determine alert severity (deterministic Python logic)
-            severity = get_alert_severity(change, unmapped=(alert_source == "unmapped_supplier"))
+            severity = get_alert_severity(change, unmapped=is_unmapped)
             logger.info(f"Change detected: {change.change_type.value if change.change_type else 'unknown'} (severity: {severity.value})")
             
             if po:

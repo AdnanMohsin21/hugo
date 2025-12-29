@@ -87,7 +87,7 @@ class SignalExtractor:
             response = self.llm.generate(prompt)
             
             if not response:
-                logger.warning("LLM unavailable — using deterministic signal fallback")
+                logger.warning("LLM unavailable — deterministic fallback used")
                 return self._fallback_heuristic(email)
             
             # Simple line-by-line parsing for boolean signals
@@ -102,12 +102,19 @@ class SignalExtractor:
                             key = "quantity_change_mentioned"
                         signals[key] = 'true' in val
             
-            # If all signals extracted are false, double check with heuristic just in case LLM missed it
-            if not any(signals.values()):
-                logger.debug("LLM returned all FALSE - checking heuristics as backup")
+            # If LLM fails OR returns empty signals, apply fallback heuristics
+            if not response or not any(signals.values()):
+                if not response:
+                    logger.warning("LLM unavailable — deterministic fallback used")
+                else:
+                    logger.debug("LLM returned all FALSE - checking heuristics as backup")
+                
                 heuristic_signals = self._get_heuristic_signals(email)
                 if any(heuristic_signals.values()):
-                    logger.info("Heuristics detected signal missed by LLM")
+                    if not response:
+                        logger.info("LLM unavailable — deterministic fallback used")
+                    else:
+                        logger.info("Heuristics detected signal missed by LLM")
                     signals.update({k: v for k, v in heuristic_signals.items() if v})
 
             logger.info(f"Extracted signals: {signals}")
@@ -126,7 +133,7 @@ class SignalExtractor:
             
         except Exception as e:
             logger.error(f"Signal extraction failed: {e}")
-            logger.warning("LLM unavailable — using deterministic signal fallback")
+            logger.warning("LLM unavailable — deterministic fallback used")
             return self._fallback_heuristic(email)
             
     def _get_heuristic_signals(self, email: Email) -> dict[str, bool]:
@@ -169,4 +176,5 @@ class SignalExtractor:
             supplier_sentiment=SupplierSentiment.NEUTRAL,
             ambiguity_detected=False
         )
+
 

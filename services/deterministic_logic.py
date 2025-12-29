@@ -76,14 +76,10 @@ def calculate_delay_days(
     if signal.urgency_level == UrgencyLevel.HIGH and signal.delay_mentioned:
         return 7
     
-    # If delay mentioned but no specific date, use conservative estimate
+    # If delay mentioned but no specific date, use conservative default
     if signal.delay_mentioned:
-        if signal.commitment_confidence == CommitmentConfidence.WEAK:
-            return 5
-        elif signal.ambiguity_detected:
-            return 3
-        else:
-            return 1
+        # CRITICAL: Default to 1 day if delay detected but no date provided
+        return 1
     
     return None
 
@@ -426,4 +422,5 @@ def build_risk_assessment(
         financial_impact_estimate=None,  # Not calculated deterministically
         reasoning=reasoning
     )
+
 

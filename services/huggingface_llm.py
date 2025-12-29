@@ -34,11 +34,10 @@ class HuggingFaceLLM:
             raise ValueError("HF_TOKEN environment variable is required but not set!")
         
         self.model = model
-        self.api_url = f"https://api-inference.huggingface.co/models/{model}"
+        self.api_url = f"https://router.huggingface.co/models/{model}"
         self.headers = {"Authorization": f"Bearer {self.token}"}
         # Keep client for other hub-related utilities if needed
         self.client = InferenceClient(model=model, token=self.token)
-        logger.info(f"Initialized HuggingFaceLLM with model: {model}")
 
     def generate(self, prompt: str) -> str:
         """
