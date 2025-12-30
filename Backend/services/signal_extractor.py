@@ -176,5 +176,3 @@ class SignalExtractor:
             supplier_sentiment=SupplierSentiment.NEUTRAL,
             ambiguity_detected=False
         )
-
-

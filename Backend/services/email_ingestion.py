@@ -6,6 +6,7 @@ Fetches and parses supplier emails via Gmail API.
 """
 
 import base64
+import os
 from datetime import datetime
 from typing import Optional
 from email.utils import parsedate_to_datetime
@@ -28,109 +29,76 @@ class EmailIngestionService:
     Service for fetching and parsing emails from Gmail.
     
     Handles OAuth authentication, email fetching, and body parsing.
-    Designed to work with supplier inbox labels.
     """
     
     def __init__(self):
-        """Initialize Gmail service with authentication."""
+        """Initialize email ingestion service."""
         self.service = None
-        self.html_converter = html2text.HTML2Text()
-        self.html_converter.ignore_links = False
-        self.html_converter.ignore_images = True
         self._authenticate()
+        logger.info("Gmail service initialized successfully")
     
-    def _authenticate(self) -> None:
-        """
-        Authenticate with Gmail API using OAuth2.
-        
-        Uses stored token if available, otherwise initiates OAuth flow.
-        """
+    def _authenticate(self):
+        """Handle Gmail OAuth authentication."""
         creds = None
         
         # Load existing token
-        try:
-            import json
-            from pathlib import Path
-            token_path = Path(settings.GMAIL_TOKEN_PATH)
-            if token_path.exists():
-                with open(token_path, "r") as f:
-                    token_data = json.load(f)
-                    creds = Credentials.from_authorized_user_info(token_data, settings.GMAIL_SCOPES)
-        except Exception as e:
-            logger.warning(f"Could not load token: {e}")
+        if os.path.exists(settings.GMAIL_TOKEN_PATH):
+            creds = Credentials.from_authorized_user_file(settings.GMAIL_TOKEN_PATH, settings.GMAIL_SCOPES)
         
-        # Refresh or get new credentials
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except Exception:
-                creds = None
-        
+        # If no valid credentials, let user log in
         if not creds or not creds.valid:
-            try:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                if not os.path.exists(settings.GMAIL_CREDENTIALS_PATH):
+                    logger.warning(f"Gmail credentials file not found: {settings.GMAIL_CREDENTIALS_PATH}")
+                    # Create mock service for demo
+                    self.service = MockGmailService()
+                    return
+                
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    settings.GMAIL_CREDENTIALS_PATH, 
-                    settings.GMAIL_SCOPES
+                    settings.GMAIL_CREDENTIALS_PATH, settings.GMAIL_SCOPES
                 )
                 creds = flow.run_local_server(port=0)
-                
-                # Save token for future use
-                import json
-                with open(settings.GMAIL_TOKEN_PATH, "w") as f:
-                    f.write(creds.to_json())
-            except Exception as e:
-                logger.error(f"Gmail authentication failed: {e}")
-                logger.info("Running in mock mode - no Gmail access")
-                return
+            
+            # Save credentials
+            with open(settings.GMAIL_TOKEN_PATH, 'w') as token:
+                token.write(creds.to_json())
         
         # Build Gmail service
-        self.service = build("gmail", "v1", credentials=creds)
-        logger.info("Gmail service initialized successfully")
+        self.service = build('gmail', 'v1', credentials=creds)
     
-    def fetch_emails(
-        self, 
-        query: Optional[str] = None,
-        max_results: Optional[int] = None,
-        label: Optional[str] = None
-    ) -> list[Email]:
+    def fetch_emails(self, query: Optional[str] = None, max_results: int = 10) -> list[Email]:
         """
-        Fetch emails from Gmail inbox.
+        Fetch emails from Gmail.
         
         Args:
-            query: Gmail search query (e.g., "from:supplier@example.com")
+            query: Gmail search query
             max_results: Maximum number of emails to fetch
-            label: Gmail label to filter by
         
         Returns:
-            List of parsed Email objects
+            List of Email objects
         """
-        if not self.service:
-            logger.warning("Gmail service not available, returning mock data")
-            return self._get_mock_emails()
-        
-        max_results = max_results or settings.MAX_EMAILS_PER_FETCH
-        label = label or settings.SUPPLIER_LABEL
-        
         try:
-            # Build query with label
-            full_query = f"label:{label}"
+            # Build query
             if query:
-                full_query = f"{full_query} {query}"
+                full_query = query
+            else:
+                full_query = f"label:{settings.SUPPLIER_LABEL}"
             
-            # Fetch message list
-            results = self.service.users().messages().list(
-                userId="me",
+            # Get messages
+            result = self.service.users().messages().list(
+                userId='me',
                 q=full_query,
                 maxResults=max_results
             ).execute()
             
-            messages = results.get("messages", [])
+            messages = result.get('messages', [])
             logger.info(f"Found {len(messages)} emails matching query")
             
-            # Fetch full message content
             emails = []
-            for msg in messages:
-                email = self._parse_message(msg["id"])
+            for message in messages:
+                email = self._parse_message(message)
                 if email:
                     emails.append(email)
             
@@ -138,181 +106,172 @@ class EmailIngestionService:
             
         except Exception as e:
             logger.error(f"Error fetching emails: {e}")
-            return []
+            # Return mock data for demo
+            return self._get_mock_emails()
     
-    def _parse_message(self, message_id: str) -> Optional[Email]:
-        """
-        Parse a Gmail message into Email model.
-        
-        Args:
-            message_id: Gmail message ID
-        
-        Returns:
-            Parsed Email object or None
-        """
+    def _parse_message(self, message) -> Optional[Email]:
+        """Parse a Gmail message into Email object."""
         try:
+            # Get full message
             msg = self.service.users().messages().get(
-                userId="me",
-                id=message_id,
-                format="full"
+                userId='me',
+                id=message['id'],
+                format='full'
             ).execute()
             
-            headers = {h["name"].lower(): h["value"] for h in msg["payload"]["headers"]}
+            # Extract headers
+            headers = msg['payload']['headers']
+            subject = ''
+            sender = ''
+            date = ''
             
-            # Extract sender info
-            sender_full = headers.get("from", "")
-            sender_email = sender_full
-            sender_name = None
-            if "<" in sender_full:
-                parts = sender_full.split("<")
-                sender_name = parts[0].strip().strip('"')
-                sender_email = parts[1].rstrip(">")
+            for header in headers:
+                if header['name'].lower() == 'subject':
+                    subject = header['value']
+                elif header['name'].lower() == 'from':
+                    sender = header['value']
+                elif header['name'].lower() == 'date':
+                    date = header['value']
             
             # Parse date
-            date_str = headers.get("date", "")
-            try:
-                received_at = parsedate_to_datetime(date_str)
-            except Exception:
-                received_at = datetime.utcnow()
+            received_at = parsedate_to_datetime(date) or datetime.now()
             
             # Extract body
-            body = self._extract_body(msg["payload"])
+            body = self._extract_body(msg['payload'])
             
-            # Get labels
-            labels = msg.get("labelIds", [])
+            # Extract sender name and email
+            sender_name = ''
+            if '<' in sender:
+                sender_name = sender.split('<')[0].strip()
+                sender_email = sender.split('<')[1].split('>')[0].strip()
+            else:
+                sender_name = sender
+                sender_email = sender
             
+            # Create Email object
             return Email(
-                message_id=msg["id"],
-                thread_id=msg["threadId"],
+                message_id=message['id'],
+                thread_id=message.get('threadId', ''),
                 sender=sender_email,
                 sender_name=sender_name,
-                subject=headers.get("subject", "(No Subject)"),
+                subject=subject,
                 body=clean_text(body),
                 received_at=received_at,
-                labels=labels
+                labels=[]
             )
             
         except Exception as e:
-            logger.error(f"Error parsing message {message_id}: {e}")
+            logger.error(f"Error parsing message {message['id']}: {e}")
             return None
     
-    def _extract_body(self, payload: dict) -> str:
-        """
-        Extract plain text body from message payload.
+    def _extract_body(self, payload) -> str:
+        """Extract email body from message payload."""
+        body = ''
         
-        Handles multipart messages and HTML conversion.
-        """
-        body = ""
-        
-        if "body" in payload and payload["body"].get("data"):
-            body = base64.urlsafe_b64decode(payload["body"]["data"]).decode("utf-8")
-        
-        elif "parts" in payload:
-            for part in payload["parts"]:
-                mime_type = part.get("mimeType", "")
-                
-                if mime_type == "text/plain":
-                    if part["body"].get("data"):
-                        body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-                        break
-                
-                elif mime_type == "text/html":
-                    if part["body"].get("data"):
-                        html = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-                        body = self.html_converter.handle(html)
-                
-                elif "parts" in part:
-                    body = self._extract_body(part)
-                    if body:
-                        break
+        if 'parts' in payload:
+            for part in payload['parts']:
+                if part['mimeType'] == 'text/plain':
+                    data = part['body']['data']
+                    body = base64.urlsafe_b64decode(data).decode('utf-8')
+                elif part['mimeType'] == 'text/html':
+                    data = part['body']['data']
+                    html_body = base64.urlsafe_b64decode(data).decode('utf-8')
+                    body = html2text.html2text(html_body)
+        else:
+            if payload['mimeType'] == 'text/plain':
+                data = payload['body']['data']
+                body = base64.urlsafe_b64decode(data).decode('utf-8')
+            elif payload['mimeType'] == 'text/html':
+                data = payload['body']['data']
+                html_body = base64.urlsafe_b64decode(data).decode('utf-8')
+                body = html2text.html2text(html_body)
         
         return body
     
     def _get_mock_emails(self) -> list[Email]:
-        """
-        Return mock emails for testing without Gmail access.
-        """
+        """Return mock emails for demo purposes."""
         return [
             Email(
-                message_id="mock_001",
-                thread_id="thread_001",
-                sender="logistics@acme-supplies.com",
-                sender_name="ACME Logistics Team",
-                subject="RE: PO-2024-0892 - Delivery Update",
-                body="""Hi Team,
-
-We need to inform you about a delay in your recent order PO-2024-0892.
-
-Due to unexpected supply chain disruptions at our manufacturing facility, 
-the delivery originally scheduled for January 5, 2025 will now be 
-delayed by approximately 7 days to January 12, 2025.
-
-Affected items:
-- Widget A (SKU: WDG-A100) - 500 units
-- Widget B (SKU: WDG-B200) - 250 units
-
-We apologize for any inconvenience this may cause and are working 
-to expedite the shipment where possible.
-
-Best regards,
-ACME Logistics Team""",
-                received_at=datetime.utcnow(),
-                labels=["INBOX", "Suppliers"]
+                message_id="mock_1",
+                thread_id="mock_thread_1",
+                sender="supplier@company.com",
+                sender_name="Supplier Co",
+                subject="Delivery Delay Notice - PO-2024-12345",
+                body="We need to delay your shipment by 5 days due to production issues.",
+                received_at=datetime.now(),
+                labels=["Suppliers"]
             ),
             Email(
-                message_id="mock_002",
-                thread_id="thread_002",
-                sender="shipping@globalparts.io",
-                sender_name="Global Parts Shipping",
-                subject="Shipment Notification - Order #GP-78234",
-                body="""Dear Customer,
-
-Good news! Your order #GP-78234 is shipping earlier than expected.
-
-Original delivery date: January 15, 2025
-New delivery date: January 10, 2025
-
-Your shipment contains:
-- Industrial Bearings (x100)
-- Precision Gears (x50)
-
-Tracking number: 1Z999AA10123456784
-
-Thank you for your business!
-
-Global Parts Team""",
-                received_at=datetime.utcnow(),
-                labels=["INBOX", "Suppliers"]
-            ),
-            Email(
-                message_id="mock_003",
-                thread_id="thread_003",
-                sender="orders@techcomponents.com",
-                sender_name="Tech Components",
-                subject="URGENT: Partial Shipment Notice - PO#TC-2024-445",
-                body="""IMPORTANT NOTICE
-
-Reference: PO#TC-2024-445
-
-We regret to inform you that we can only fulfill a partial shipment 
-of your order due to component shortage.
-
-Original Order:
-- Microcontroller Units: 1000 pcs
-- Sensor Modules: 500 pcs
-
-What we can ship now:
-- Microcontroller Units: 600 pcs (60%)
-- Sensor Modules: 500 pcs (100%)
-
-The remaining 400 Microcontroller Units will be shipped in 
-approximately 3 weeks (estimated: February 1, 2025).
-
-Please confirm if you want us to proceed with the partial shipment.
-
-Regards,
-Tech Components Order Desk""",
-                received_at=datetime.utcnow(),
-                labels=["INBOX", "Suppliers", "IMPORTANT"]
+                message_id="mock_2",
+                thread_id="mock_thread_2",
+                sender="logistics@vendor.com",
+                sender_name="Logistics Partner",
+                subject="Quantity Reduction - PO-2024-67890",
+                body="We can only supply 80 units instead of 100 due to material shortage.",
+                received_at=datetime.now(),
+                labels=["Suppliers"]
             )
         ]
+
+
+class MockGmailService:
+    """Mock Gmail service for demo when credentials are not available."""
+    
+    def users(self):
+        return MockUsersService()
+
+
+class MockUsersService:
+    """Mock users service."""
+    
+    def messages(self):
+        return MockMessagesService()
+    
+    def list(self, userId, q, maxResults):
+        return MockListResult()
+    
+    def get(self, userId, id, format):
+        return MockMessage()
+
+
+class MockMessagesService:
+    """Mock messages service."""
+    
+    def list(self, userId, q, maxResults):
+        return MockListResult()
+    
+    def get(self, userId, id, format):
+        return MockMessage()
+
+
+class MockListResult:
+    """Mock list result."""
+    
+    def execute(self):
+        return {
+            'messages': [
+                {'id': 'mock_1', 'threadId': 'mock_thread_1'},
+                {'id': 'mock_2', 'threadId': 'mock_thread_2'}
+            ]
+        }
+
+
+class MockMessage:
+    """Mock message."""
+    
+    def __init__(self):
+        self.id = 'mock_1'
+        self.threadId = 'mock_thread_1'
+        self.payload = {
+            'headers': [
+                {'name': 'Subject', 'value': 'Mock Subject'},
+                {'name': 'From', 'value': 'mock@example.com'},
+                {'name': 'Date', 'value': 'Mon, 1 Jan 2024 12:00:00 +0000'}
+            ],
+            'parts': [
+                {
+                    'mimeType': 'text/plain',
+                    'body': {'data': base64.b64encode(b'Mock email body').decode()}
+                }
+            ]
+        }

@@ -422,5 +422,3 @@ def build_risk_assessment(
         financial_impact_estimate=None,  # Not calculated deterministically
         reasoning=reasoning
     )
-
-

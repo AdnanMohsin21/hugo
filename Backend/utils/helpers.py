@@ -9,8 +9,6 @@ import re
 import logging
 from datetime import datetime
 from typing import Optional
-from dateutil import parser as date_parser
-from dateutil.relativedelta import relativedelta
 
 
 def setup_logging(level: str = "INFO") -> logging.Logger:
@@ -28,69 +26,22 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
     if not logger.handlers:
         handler = logging.StreamHandler()
         formatter = logging.Formatter(
-            "%(asctime)s | %(name)s | %(levelname)s | %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, level.upper()))
     return logger
-
-
-def parse_date(date_string: str) -> Optional[datetime]:
-    """
-    Parse various date formats from supplier emails.
-    
-    Handles formats like:
-    - "December 15, 2024"
-    - "15/12/2024"
-    - "2024-12-15"
-    - "next Monday"
-    - "in 3 days"
-    
-    Args:
-        date_string: Raw date string from email
-    
-    Returns:
-        Parsed datetime or None if parsing fails
-    """
-    if not date_string or not isinstance(date_string, str):
-        return None
-    
-    date_string = date_string.strip()
-    
-    # Handle relative dates
-    relative_patterns = {
-        r"in (\d+) days?": lambda m: datetime.now() + relativedelta(days=int(m.group(1))),
-        r"in (\d+) weeks?": lambda m: datetime.now() + relativedelta(weeks=int(m.group(1))),
-        r"next week": lambda m: datetime.now() + relativedelta(weeks=1),
-        r"tomorrow": lambda m: datetime.now() + relativedelta(days=1),
-    }
-    
-    for pattern, handler in relative_patterns.items():
-        match = re.search(pattern, date_string.lower())
-        if match:
-            return handler(match)
-    
-    # Try standard date parsing
-    try:
-        return date_parser.parse(date_string, fuzzy=True)
-    except (ValueError, TypeError):
-        return None
 
 
 def clean_text(text: str) -> str:
     """
-    Clean and normalize email text for processing.
-    
-    - Removes excessive whitespace
-    - Strips HTML remnants
-    - Normalizes line breaks
-    - Removes signatures and disclaimers (basic)
+    Clean and normalize text content.
     
     Args:
-        text: Raw email text
+        text: Raw text content
     
     Returns:
         Cleaned text
@@ -98,105 +49,70 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     
-    # Remove common HTML entities
-    html_entities = {
-        "&nbsp;": " ",
-        "&amp;": "&",
-        "&lt;": "<",
-        "&gt;": ">",
-        "&quot;": '"',
-        "&#39;": "'",
-    }
-    for entity, char in html_entities.items():
-        text = text.replace(entity, char)
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text)
     
-    # Remove any remaining HTML tags
-    text = re.sub(r"<[^>]+>", " ", text)
+    # Remove special characters but keep basic punctuation
+    text = re.sub(r'[^\w\s\-\.,\!?;:]', '', text)
     
-    # Normalize whitespace
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"\n\s*\n", "\n\n", text)
+    # Strip leading/trailing whitespace
+    text = text.strip()
     
-    # Remove common email signatures (basic detection)
-    signature_markers = [
-        r"^--\s*$",
-        r"^Best regards,",
-        r"^Sincerely,",
-        r"^Thanks,",
-        r"^Sent from my",
-        r"^This email and any attachments",
-        r"^CONFIDENTIAL",
-    ]
-    
-    lines = text.split("\n")
-    cleaned_lines = []
-    for line in lines:
-        if any(re.match(marker, line.strip(), re.IGNORECASE) for marker in signature_markers):
-            break
-        cleaned_lines.append(line)
-    
-    text = "\n".join(cleaned_lines)
-    
-    return text.strip()
+    return text
 
 
-def extract_po_numbers(text: str) -> list[str]:
+def parse_date_flexible(date_str: str) -> Optional[datetime]:
     """
-    Extract purchase order numbers from text.
-    
-    Looks for patterns like:
-    - PO#12345
-    - PO-2024-0001
-    - Purchase Order 12345
-    - Order #ABC-123
+    Parse date string in various formats.
     
     Args:
-        text: Text to search
+        date_str: Date string to parse
     
     Returns:
-        List of found PO numbers
+        Parsed datetime or None
     """
+    if not date_str:
+        return None
+    
+    # Common date formats
+    formats = [
+        '%Y-%m-%d',
+        '%m/%d/%Y',
+        '%d/%m/%Y',
+        '%Y-%m-%d %H:%M:%S',
+        '%m/%d/%Y %H:%M:%S',
+        '%d/%m/%Y %H:%M:%S'
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    
+    return None
+
+
+def extract_po_reference(text: str) -> Optional[str]:
+    """
+    Extract PO reference from text.
+    
+    Args:
+        text: Text to search for PO reference
+    
+    Returns:
+        PO reference or None
+    """
+    # Common PO patterns
     patterns = [
-        r"PO[#\-\s]?(\d{4,})",
-        r"PO[#\-\s]?([A-Z0-9\-]{5,})",
-        r"Purchase\s+Order[#:\s]+(\d{4,})",
-        r"Order[#:\s]+([A-Z0-9\-]{5,})",
+        r'PO[#:\s]*([A-Z0-9\-]+)',
+        r'Purchase Order[:\s]*([A-Z0-9\-]+)',
+        r'Order[:\s]*([A-Z0-9\-]+)'
     ]
     
-    found = set()
     for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        found.update(matches)
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
     
-    return list(found)
-
-
-def calculate_delay_days(original: datetime, new: datetime) -> int:
-    """
-    Calculate the number of days between two dates.
-    
-    Args:
-        original: Original delivery date
-        new: New delivery date
-    
-    Returns:
-        Days of delay (positive) or early (negative)
-    """
-    delta = new - original
-    return delta.days
-
-
-def format_currency(amount: float, currency: str = "USD") -> str:
-    """
-    Format a currency amount for display.
-    
-    Args:
-        amount: Numeric amount
-        currency: Currency code
-    
-    Returns:
-        Formatted string like "$1,234.56"
-    """
-    symbols = {"USD": "$", "EUR": "€", "GBP": "£", "INR": "₹"}
-    symbol = symbols.get(currency, currency + " ")
-    return f"{symbol}{amount:,.2f}"
+    return None

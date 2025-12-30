@@ -1,4 +1,3 @@
-
 """
 Hugo - Inbox Watchdog Agent
 Main Orchestrator
@@ -27,6 +26,9 @@ from services.risk_engine import RiskEngine
 from services.huggingface_llm import HuggingFaceLLM
 from utils.helpers import setup_logging
 from enum import Enum
+from inventory_balancer import InventoryBalancer
+from data.dataset_loader import DatasetLoader
+from analytics.hoarding_detector import HoardingDetector
 
 logger = setup_logging()
 
@@ -261,8 +263,13 @@ class HugoAgent:
     6. Return actionable alerts
     """
     
-    def __init__(self):
-        """Initialize all Hugo services."""
+    def __init__(self, simulation_mode: bool = False):
+        """
+        Initialize all Hugo services.
+        
+        Args:
+            simulation_mode: If True, use dataset-derived dates, not system clock
+        """
         logger.info("Initializing Hugo Agent...")
         
         # Check LLM provider availability at startup
@@ -273,6 +280,17 @@ class HugoAgent:
         self.erp = ERPMatcher()
         self.vector_store = VectorStore()
         self.risk_engine = RiskEngine()
+        self.inventory_balancer = InventoryBalancer()
+        
+        # Initialize hoarding detection with simulation mode
+        self.dataset_loader = DatasetLoader()
+        self.hoarding_detector = HoardingDetector(self.dataset_loader)
+        self.simulation_mode = simulation_mode
+        
+        if simulation_mode:
+            logger.info("Running in SIMULATION MODE (dataset-driven time windows)")
+        else:
+            logger.info("Running in REAL-TIME MODE")
         
         logger.info("Hugo Agent ready")
     
@@ -565,16 +583,87 @@ class HugoAgent:
         )
         
         logger.info(f"Added incident {incident_id} to history")
+    
+    def _print_hoarding_summary(self, hoarding_results: list) -> None:
+        """
+        Print hoarding risk summary to console.
+        
+        Args:
+            hoarding_results: List of HoardingResult objects
+        """
+        print("\n" + "="*60)
+        print("📦 HOARDING RISK SUMMARY")
+        print("="*60)
+        
+        if not hoarding_results:
+            print("No hoarding risk data available.")
+            return
+        
+        # Filter by risk level
+        high_risk = [r for r in hoarding_results if r.risk_level == "HIGH"]
+        medium_risk = [r for r in hoarding_results if r.risk_level == "MEDIUM"]
+        low_risk = [r for r in hoarding_results if r.risk_level == "LOW"]
+        
+        total_excess = sum(r.excess_units for r in hoarding_results)
+        
+        print(f"Materials at Risk: {len(high_risk) + len(medium_risk)}")
+        print(f"Total Excess Stock: {total_excess:,} units")
+        print()
+        
+        # High risk materials
+        if high_risk:
+            print("🔴 HIGH RISK MATERIALS:")
+            print("-" * 40)
+            for result in high_risk[:5]:
+                actions = self.hoarding_detector.get_redistribution_actions(result)
+                print(f"  Material: {result.material}")
+                print(f"  Excess Units: {result.excess_units:,}")
+                print(f"  Confidence: {result.confidence}")
+                print(f"  Action: {actions[0] if actions else 'Monitor'}")
+                print()
+        
+        # Medium risk materials
+        if medium_risk:
+            print("🟡 MEDIUM RISK MATERIALS:")
+            print("-" * 40)
+            for result in medium_risk[:3]:
+                actions = self.hoarding_detector.get_redistribution_actions(result)
+                print(f"  Material: {result.material}")
+                print(f"  Excess Units: {result.excess_units:,}")
+                print(f"  Action: {actions[0] if actions else 'Monitor'}")
+                print()
+        
+        # Summary
+        print("RECOMMENDATIONS:")
+        print("-" * 40)
+        if high_risk:
+            print("• Immediate redistribution of high-risk excess stock")
+            print("• Review procurement policies for affected materials")
+        if medium_risk:
+            print("• Plan phased redistribution of medium-risk items")
+        if total_excess > 1000:
+            print(f"• Potential to free up ${total_excess * 50:,.0f}+ in working capital")
+        
+        print("="*60 + "\n")
 
 
-def run_demo():
-    """Run a demo of the Hugo agent with mock data."""
+def run_demo(simulation_mode: bool = False):
+    """
+    Run a demo of the Hugo agent with mock data.
+    
+    Args:
+        simulation_mode: If True, use dataset-driven time windows
+    """
     print("\n" + "="*60)
     print("HUGO - Inbox Watchdog Agent Demo")
+    if simulation_mode:
+        print("MODE: SIMULATION (dataset-driven time windows)")
+    else:
+        print("MODE: REAL-TIME")
     print("="*60 + "\n")
     
     # Initialize agent
-    agent = HugoAgent()
+    agent = HugoAgent(simulation_mode=simulation_mode)
     
     # Process emails (uses mock data without Gmail credentials)
     print("Fetching and processing supplier emails...\n")
@@ -620,10 +709,27 @@ def run_demo():
     print(f"Processed {len(alerts)} alerts")
     print("="*60 + "\n")
     
+    # Run Inventory Balancer
+    print("Running Inventory Balancer analysis...")
+    recommendations = agent.inventory_balancer.analyze_inventory()
+    agent.inventory_balancer.print_summary(recommendations)
+    
+    # Run Priority Wars (NEW FEATURE)
+    print("\nRunning Priority Wars analysis...")
+    priority_conflicts = agent.inventory_balancer.detect_priority_conflicts(recommendations)
+    agent.inventory_balancer.print_priority_wars_summary(priority_conflicts)
+    
+    # Run Hoarding Detection
+    print("\nRunning Hoarding Risk analysis...")
+    hoarding_results = agent.hoarding_detector.analyze_all_materials()
+    agent._print_hoarding_summary(hoarding_results)
+    
     return alerts
 
 
 # Entry point
 if __name__ == "__main__":
-    run_demo()
-# >>>>>>> 8a0f741faa9c44c846dccccadea8ded47d968233
+    # Check for simulation mode environment variable
+    SIMULATION_MODE = os.environ.get("HUGO_SIMULATION_MODE", "false").lower() in ["true", "1", "yes"]
+    
+    run_demo(simulation_mode=SIMULATION_MODE)

@@ -54,8 +54,10 @@ class HuggingFaceLLM:
             payload = {
                 "inputs": prompt,
                 "parameters": {
-                    "max_new_tokens": 200,
-                    "temperature": 0.1,
+                    "max_new_tokens": 150,
+                    "temperature": 0.2,
+                    "do_sample": True,
+                    "return_full_text": False
                 }
             }
             
@@ -66,99 +68,105 @@ class HuggingFaceLLM:
                 timeout=30
             )
             
-            if response.status_code != 200:
-                logger.error(f"HF API returned status {response.status_code}: {response.text}")
-                raise RuntimeError(f"HF API error ({response.status_code}): {response.text}")
+            if response.status_code == 429:
+                # Rate limited - wait and retry once
+                import time
+                time.sleep(2)
+                response = requests.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=30
+                )
+            
+            response.raise_for_status()
             
             result = response.json()
             
-            # Text2Text models return a list of dicts: [{"generated_text": "..."}]
+            # Handle different response formats
             if isinstance(result, list) and len(result) > 0:
-                content = result[0].get("generated_text", "")
-                logger.info("Hugging Face inference successful")
-                return content.strip()
+                # Standard HF API format
+                generated_text = result[0].get("generated_text", "")
+            elif isinstance(result, dict):
+                # Alternative format
+                generated_text = result.get("generated_text", "")
+            else:
+                logger.warning(f"Unexpected response format: {type(result)}")
+                generated_text = str(result)
             
-            return str(result).strip()
+            # Clean up the response
+            if generated_text:
+                generated_text = generated_text.strip()
+                # Remove common artifacts
+                artifacts = ["'", '"', '`', '\n\n', '\n\t']
+                for artifact in artifacts:
+                    generated_text = generated_text.replace(artifact, '')
+                
+                return generated_text
+            else:
+                logger.warning("Empty response from Hugging Face API")
+                return ""
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"HF API error ({response.status_code if 'response' in locals() else 'Unknown'}): {str(e)}"
+            logger.error(f"Hugging Face call failed: RuntimeError: {error_msg}")
+            raise RuntimeError(error_msg) from e
             
         except Exception as e:
-            logger.error(f"Hugging Face call failed: {type(e).__name__}: {str(e)}")
-            raise RuntimeError(f"HF Inference API error: {e}")
-
-    def generate_json(self, prompt: str) -> Dict[str, Any]:
+            logger.error(f"Unexpected error in HuggingFace LLM: {e}")
+            raise RuntimeError(f"HF Inference API error: {str(e)}") from e
+    
+    def generate_json(self, prompt: str, schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Generate JSON output from the model with automatic repair and retry.
-        
-        Features:
-        - Automatic JSON extraction from response
-        - Retry with stricter system message on failure
-        - JSON repair on failure (using HF model)
-        - Output normalization
+        Generate JSON output using the LLM with automatic repair.
         
         Args:
-            prompt: Input prompt that should produce JSON
+            prompt: Input prompt that should result in JSON
+            schema: Optional JSON schema for validation
             
         Returns:
-            Parsed JSON dictionary (empty dict on failure)
+            Parsed JSON dictionary
         """
         try:
-            # First attempt
             response = self.generate(prompt)
             
             if not response:
-                logger.warning("Empty response from HF API")
                 return {}
             
-            # Clean and try parsing
-            cleaned_response = clean_json_text(response)
+            # Clean and parse JSON
+            cleaned_text = clean_json_text(response)
             
             try:
-                result = json.loads(cleaned_response)
-                logger.info("Extraction successful")
-                return normalize_json_output(result)
+                parsed = json.loads(cleaned_text)
+                return parsed
             except json.JSONDecodeError as e:
-                logger.warning(f"Initial JSON parsing failed: {e}. Retrying with stricter system message...")
+                logger.warning(f"JSON parsing failed, attempting repair: {e}")
                 
-                # Retry with stricter system message
-                try:
-                    strict_messages = [
-                        {"role": "system", "content": "You are a JSON-only response system. You MUST return ONLY valid JSON. No explanations, no markdown, no code blocks. Invalid JSON will cause system failure."},
-                        {"role": "user", "content": prompt}
-                    ]
-                    
-                    retry_response = self.client.text_generation(
-                        prompt,
-                        max_new_tokens=200,
-                        temperature=0.1,
-                        seed=42
-                    )
-                    
-                    retry_content = retry_response.strip()
-                    logger.info("Hugging Face chat completion successful")
-                    
-                    cleaned_retry = clean_json_text(retry_content)
-                    result = json.loads(cleaned_retry)
-                    logger.info("Extraction successful")
-                    return normalize_json_output(result)
-                    
-                except json.JSONDecodeError as retry_error:
-                    logger.warning(f"Retry JSON parsing also failed: {retry_error}. Attempting repair...")
-                    
-                    # Attempt repair using HF model
-                    repaired = attempt_json_repair(
-                        raw_response=retry_content if 'retry_content' in locals() else response,
-                        parse_error=retry_error,
-                        ollama_url="",  # Not used for HF
-                        model=self.model
-                    )
-                    
-                    if repaired:
-                        logger.info("JSON repair successful")
-                        logger.info("Extraction successful")
-                        return repaired
-                    
-                    logger.error("JSON repair failed or returned empty")
+                # Try to repair using our repair service
+                repaired = attempt_json_repair(response, e, self.api_url, self.model)
+                
+                if repaired is not None:
+                    logger.info("JSON repair successful")
+                    return repaired
+                else:
+                    logger.error("JSON repair failed")
                     return {}
-                
+                    
         except Exception as e:
-            logger.error(f"Unexpected error in generate_json: {e}")
+            logger.error(f"JSON generation failed: {e}")
             return {}
+    
+    def is_available(self) -> bool:
+        """
+        Check if the Hugging Face service is available.
+        
+        Returns:
+            True if service is available, False otherwise
+        """
+        try:
+            # Simple test with minimal prompt
+            test_response = self.generate("Test")
+            return True
+        except Exception as e:
+            logger.warning(f"Hugging Face service unavailable: {e}")
+            return False
