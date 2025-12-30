@@ -85,8 +85,21 @@ class DatasetLoader:
         self.reference_date = self._calculate_reference_date()
         
         logger.info(f"DatasetLoader initialized with all CSV files")
-        logger.info(f"Loaded datasets: {len(self.sales_orders)} sales orders, {len(self.material_master)} materials, {len(self.stock_levels)} stock levels, {len(self.bom)} BOM entries, {len(self.suppliers) if self.suppliers else 0} suppliers")
-    
+        # --- IN Backend/data/dataset_loader.py ---
+
+        # OLD CRASHING LINE:
+        # logger.info(f"Loaded datasets: {len(self.sales_orders)} sales orders...") 
+
+        # NEW SAFE LINE:
+        sales_len = len(self.sales_orders) if self.sales_orders is not None else 0
+        stock_len = len(self.stock_levels) if self.stock_levels is not None else 0
+        mat_len = len(self.material_master) if self.material_master is not None else 0
+        bom_len = len(self.bom) if self.bom is not None else 0
+        supp_len = len(self.suppliers) if self.suppliers is not None else 0
+
+        logger.info(f"Loaded datasets: {sales_len} sales orders, {mat_len} materials, {stock_len} stock levels, {bom_len} BOM entries, {supp_len} suppliers")
+
+        
     def _calculate_reference_date(self):
         """Calculate reference date from sales orders."""
         if not self.sales_orders or self.sales_orders.empty():

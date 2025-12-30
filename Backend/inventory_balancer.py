@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+import os
 
 from utils.helpers import setup_logging
 from services.huggingface_llm import HuggingFaceLLM
@@ -54,8 +55,12 @@ class InventoryBalancer:
         self.stock_levels_file = self.data_dir / "stock_levels.csv"
         self.llm = HuggingFaceLLM()
         
-        # Initialize dataset loader for proper material mapping
-        self.dataset_loader = DatasetLoader(data_dir)
+        # Calculate the absolute path to 'hugo_data_samples' inside Backend
+        base_dir = os.path.dirname(os.path.abspath(__file__)) # Gets current folder (Backend)
+        data_path = os.path.join(base_dir, "hugo_data_samples")
+        
+        # Initialize loader with the correct path
+        self.dataset_loader = DatasetLoader(data_path)
         
         # Initialize Priority Arbiter for conflict resolution
         self.priority_arbiter = PriorityArbiter(logger=logger, llm_client=self.llm)
