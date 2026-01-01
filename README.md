@@ -215,7 +215,7 @@ GMAIL_USER_EMAIL=your_email@gmail.com
 HF_API_TOKEN=your_huggingface_api_key
 HF_MODEL_NAME=google/flan-t5-large
 
----
+```
 
 2️⃣ Installation Steps
 ```
