@@ -190,6 +190,18 @@ No manual data stitching required.
 
 1️⃣ Environment Variables
 
+#### API Keys & Tokens
+
+To use Hugo, you must configure your own API credentials.
+
+Hugo does not ship with hard-coded API keys.
+
+Required:
+- Google Gmail API credentials (OAuth)
+- Hugging Face API token (for optional LLM features)
+
+These credentials are loaded via environment variables using a `.env` file.
+
 Create a `.env` file in the root directory:
 
 ```env
@@ -206,7 +218,7 @@ HF_MODEL_NAME=google/flan-t5-large
 ---
 
 2️⃣ Installation Steps
-
+```
 Clone the Repository
 git clone https://github.com/AdnanMohsin21/hugo.git
 cd hugo
@@ -222,21 +234,20 @@ python -m venv .venv
 
 Install Dependencies
 pip install -r requirements.txt
-
+```
 
 3️⃣ Run the Application
 
-Run backend and frontend separately.
-
-Terminal A (Backend)
-python Backend/main.py
-
-
-Terminal B (Frontend)
+Run frontend and backend separately.
+```
+# Terminal A (Frontend)
 streamlit run Frontend/app.py
 
+# Terminal B (Backend)
+python Backend/main.py
+```
 
-📂 Project Structure
+## 📂 Project Structure
 
 hugo/
 ├── Frontend/
@@ -271,7 +282,10 @@ hugo/
 └── README.md
 
 
-Authors- (TEAM)
+## Authors- (TEAM)
 
 Adnan Mohsin — Backend, Architecture, Intelligence Systems
 Al Amin — Frontend & Backend Integration
+
+
+
