@@ -1,3 +1,9 @@
+
+
+
+
+
+
 # 🤖 Hugo — AI Procurement & Operations Copilot for Voltway
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
@@ -216,39 +222,43 @@ HF_API_TOKEN=your_huggingface_api_key
 HF_MODEL_NAME=google/flan-t5-large
 
 ```
-
+---
 2️⃣ Installation Steps
+
 ```
-Clone the Repository
+# Clone the Repository
 git clone https://github.com/AdnanMohsin21/hugo.git
 cd hugo
 
-Create Virtual Environment
-# macOS / Linux
+# Create Virtual Environment-
+# For macOS / Linux
 python -m venv .venv
 source .venv/bin/activate
 
-# Windows
+# For Windows
 python -m venv .venv
 .venv\Scripts\activate
 
-Install Dependencies
+# Install Dependencies
 pip install -r requirements.txt
-```
 
+```
+---
 3️⃣ Run the Application
 
-Run frontend and backend separately.
+Run backend and frontend separately.
 ```
 # Terminal A (Frontend)
 streamlit run Frontend/app.py
 
 # Terminal B (Backend)
 python Backend/main.py
+
 ```
 
+---
 ## 📂 Project Structure
-
+```
 hugo/
 ├── Frontend/
 │   ├── app.py
@@ -280,12 +290,11 @@ hugo/
 │   └── main.py
 │
 └── README.md
+```
 
-
+---
 ## Authors- (TEAM)
 
 Adnan Mohsin — Backend, Architecture, Intelligence Systems
+
 Al Amin — Frontend & Backend Integration
-
-
-
